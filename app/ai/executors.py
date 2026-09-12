@@ -6,80 +6,169 @@ Each function returns a dict that gets sent back to Grok.
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from fastapi import HTTPException
-
+import re
 from app.models import (
     User, Student, Teacher, Course, Enrollment,
     TeacherCourse, Timetable, AttendanceSession, AttendanceRecord,
 )
 from app.security import hash_password
+def _validate_email(email: str) -> bool:
+    return bool(
+        re.match(
+            r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+            email.strip()
+        )
+    )
 
+
+def _required_text(args: dict, field: str) -> str | None:
+    value = args.get(field)
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    return value.strip()
 
 # =========================================================
 # ADMIN EXECUTORS
 # =========================================================
 def exec_create_student(db: Session, args: dict) -> dict:
-    if db.query(User).filter(User.email == args["email"]).first():
+    email = _required_text(args, "email")
+    password = _required_text(args, "password")
+    full_name = _required_text(args, "full_name")
+    roll_number = _required_text(args, "roll_number")
+    batch_year = args.get("batch_year")
+
+    if not email or not _validate_email(email):
+        return {"error": "Please provide a valid email address."}
+
+    if not password or len(password) < 6:
+        return {"error": "Password must be at least 6 characters long."}
+
+    if not full_name:
+        return {"error": "Full name is required."}
+
+    if not roll_number:
+        return {"error": "Roll number is required."}
+
+    if not isinstance(batch_year, int) or batch_year < 2000 or batch_year > 2100:
+        return {"error": "Batch year must be a valid year."}
+
+    if db.query(User).filter(User.email == email).first():
         return {"error": "Email already exists"}
-    if db.query(Student).filter(Student.roll_number == args["roll_number"]).first():
+
+    if db.query(Student).filter(Student.roll_number == roll_number).first():
         return {"error": "Roll number already exists"}
 
     user = User(
-        email=args["email"],
-        password_hash=hash_password(args["password"]),
-        full_name=args["full_name"],
+        email=email,
+        password_hash=hash_password(password),
+        full_name=full_name,
         role="student",
     )
+
     db.add(user)
     db.flush()
 
     student = Student(
         user_id=user.id,
-        roll_number=args["roll_number"],
-        batch_year=args["batch_year"],
+        roll_number=roll_number,
+        batch_year=batch_year,
     )
+
     db.add(student)
     db.commit()
-    return {"success": True, "user_id": user.id, "message": f"Student {args['full_name']} created"}
+
+    return {
+        "success": True,
+        "user_id": user.id,
+        "message": f"Student {full_name} created",
+    }
 
 
 def exec_create_teacher(db: Session, args: dict) -> dict:
-    if db.query(User).filter(User.email == args["email"]).first():
+    email = _required_text(args, "email")
+    password = _required_text(args, "password")
+    full_name = _required_text(args, "full_name")
+    employee_code = _required_text(args, "employee_code")
+    designation = _required_text(args, "designation") or "Lecturer"
+
+    if not email or not _validate_email(email):
+        return {"error": "Please provide a valid email address."}
+
+    if not password or len(password) < 6:
+        return {"error": "Password must be at least 6 characters long."}
+
+    if not full_name:
+        return {"error": "Full name is required."}
+
+    if not employee_code:
+        return {"error": "Employee code is required."}
+
+    if db.query(User).filter(User.email == email).first():
         return {"error": "Email already exists"}
-    if db.query(Teacher).filter(Teacher.employee_code == args["employee_code"]).first():
+
+    if db.query(Teacher).filter(
+        Teacher.employee_code == employee_code
+    ).first():
         return {"error": "Employee code already exists"}
 
     user = User(
-        email=args["email"],
-        password_hash=hash_password(args["password"]),
-        full_name=args["full_name"],
+        email=email,
+        password_hash=hash_password(password),
+        full_name=full_name,
         role="teacher",
     )
+
     db.add(user)
     db.flush()
 
     teacher = Teacher(
         user_id=user.id,
-        employee_code=args["employee_code"],
-        designation=args.get("designation", "Lecturer"),
+        employee_code=employee_code,
+        designation=designation,
     )
+
     db.add(teacher)
     db.commit()
-    return {"success": True, "user_id": user.id, "message": f"Teacher {args['full_name']} created"}
 
+    return {
+        "success": True,
+        "user_id": user.id,
+        "message": f"Teacher {full_name} created",
+    }
 
 def exec_add_course(db: Session, args: dict) -> dict:
-    if db.query(Course).filter(Course.code == args["code"]).first():
+    code = _required_text(args, "code")
+    title = _required_text(args, "title")
+    credits = args.get("credits")
+
+    if not code:
+        return {"error": "Course code is required."}
+
+    if not title:
+        return {"error": "Course title is required."}
+
+    if not isinstance(credits, int) or credits < 1 or credits > 6:
+        return {"error": "Course credits must be between 1 and 6."}
+
+    if db.query(Course).filter(Course.code == code).first():
         return {"error": "Course code already exists"}
 
     course = Course(
-        code=args["code"],
-        title=args["title"],
-        credits=args["credits"],
+        code=code,
+        title=title,
+        credits=credits,
     )
+
     db.add(course)
     db.commit()
-    return {"success": True, "course_id": course.id, "message": f"Course {args['code']} added"}
 
+    return {
+        "success": True,
+        "course_id": course.id,
+        "message": f"Course {code} added",
+    }
 
 # =========================================================
 # TEACHER EXECUTORS
@@ -123,17 +212,43 @@ def exec_get_course_students(db: Session, current_user: User, args: dict) -> dic
         return {"error": "You are not assigned to this course"}
 
     enrollments = db.query(Enrollment).filter(
-        Enrollment.course_id == course.id, Enrollment.status == "active"
+        Enrollment.course_id == course.id,
+        Enrollment.status == "active"
     ).all()
 
     students = []
+
     for e in enrollments:
         s = db.query(Student).filter(Student.id == e.student_id).first()
         u = db.query(User).filter(User.id == s.user_id).first()
+
+        sessions = db.query(AttendanceSession.id).filter(
+            AttendanceSession.course_id == course.id
+        ).subquery()
+
+        total = db.query(func.count(AttendanceRecord.id)).filter(
+            AttendanceRecord.student_id == s.id,
+            AttendanceRecord.session_id.in_(sessions),
+        ).scalar()
+
+        present = db.query(func.count(AttendanceRecord.id)).filter(
+            AttendanceRecord.student_id == s.id,
+            AttendanceRecord.session_id.in_(sessions),
+            AttendanceRecord.status == "present",
+        ).scalar()
+
+        attendance_percentage = (
+            round((present / total) * 100, 1)
+            if total
+            else 0.0
+        )
+
         students.append({
             "roll_number": s.roll_number,
             "full_name": u.full_name,
+            "attendance_percentage": attendance_percentage,
         })
+
     return {"students": students, "count": len(students)}
 
 

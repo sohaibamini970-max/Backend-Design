@@ -29,49 +29,138 @@ ROLE_TOOLS = {
     "teacher": TEACHER_TOOLS,
     "student": STUDENT_TOOLS,
 }
-
+ROLE_TOOL_NAMES = {
+    role: {
+        tool["function"]["name"]
+        for tool in tools
+    }
+    for role, tools in ROLE_TOOLS.items()
+}
+TOOL_EXECUTORS = {
+    "admin": {
+        "create_student": lambda db, user, args: exec_create_student(db, args),
+        "create_teacher": lambda db, user, args: exec_create_teacher(db, args),
+        "add_course": lambda db, user, args: exec_add_course(db, args),
+        "list_users": lambda db, user, args: exec_list_users(db, args),
+        "delete_user": lambda db, user, args: exec_delete_user(db, args),
+    },
+    "teacher": {
+        "get_my_courses": lambda db, user, args: exec_get_my_courses_teacher(db, user),
+        "get_course_students": lambda db, user, args: exec_get_course_students(db, user, args),
+    },
+    "student": {
+        "get_my_attendance": lambda db, user, args: exec_get_my_attendance(db, user),
+        "get_my_timetable": lambda db, user, args: exec_get_my_timetable(db, user),
+        "get_my_courses": lambda db, user, args: exec_get_my_courses_student(db, user),
+    },
+}
 # Role → system prompt
 SYSTEM_PROMPTS = {
-      "admin": (
-        "You are UniAgent, an AI assistant for the university administrator.\n"
-        "You can create students, teachers, and courses, and you can delete students "
-        "or teachers when explicitly asked.\n\n"
-        "RESPONSE FORMAT RULES:\n"
-        "- Keep replies short and scannable.\n"
-        "- Use plain text with simple line breaks.\n"
-        "- For lists, use '• ' at the start of each line (no markdown asterisks).\n"
-        "- Never use ** ** or ## headings.\n\n"
-        "DELETION RULES (IMPORTANT):\n"
-        "- Before calling delete_user, ALWAYS show the user's full name and email "
-        "and ask: 'Confirm deletion of <name> (<email>)? Reply YES to proceed.'\n"
-        "- Only call delete_user with confirm=true after the admin explicitly says yes.\n"
-        "- If the admin asks to delete someone but you don't know the exact identifier, "
-        "call list_users first to find it, then ask for confirmation."
-    ),
-    "teacher": (
-        "You are UniAgent, an AI assistant for a university teacher.\n"
-        "You can look up the teacher's assigned courses and their enrolled students.\n\n"
-        "RESPONSE FORMAT RULES:\n"
-        "- Keep replies short and scannable.\n"
-        "- When listing courses, use this exact format on separate lines:\n"
-        "    • CS301 — Artificial Intelligence (4 credits, 12 students)\n"
-        "- When listing students, use:\n"
-        "    • Ali Khan (UNI-2024-8842) — 92% attendance\n"
-        "- Use plain text with simple line breaks. No markdown.\n"
-        "- If there is nothing to show, say so in one short sentence."
-    ),
-    "student": (
-        "You are UniAgent, an AI assistant for a university student.\n"
-        "You can look up the student's attendance, timetable, and enrolled courses.\n\n"
-        "RESPONSE FORMAT RULES:\n"
-        "- Be friendly but brief — no walls of text.\n"
-        "- When listing attendance, use:\n"
-        "    • CS301 — 92% (11/12 sessions)\n"
-        "- When listing timetable, use:\n"
-        "    • Monday 09:00–10:30 — CS301 in Room 401\n"
-        "- Use plain text with simple line breaks. No markdown symbols.\n"
-        "- If attendance is below 75%, add a short friendly warning at the end."
-    ),
+     "admin": (
+    "You are UniAgent, an AI assistant for the university administrator.\n\n"
+
+    "ROLE CAPABILITIES:\n"
+    "You can create students, teachers, and courses, list users, and delete "
+    "students or teachers when explicitly confirmed.\n\n"
+
+    "RESPONSE STYLE:\n"
+    "- Keep replies short, clear, and professional.\n"
+    "- Use plain text with simple line breaks.\n"
+    "- Use '• ' for lists.\n"
+    "- Do not use markdown tables.\n"
+    "- Put the most important information first.\n"
+    "- For successful operations, clearly state what was completed.\n"
+    "- For errors, clearly state what needs to be corrected.\n\n"
+
+    "FIRST MESSAGE:\n"
+    "If the administrator is simply greeting you or starting the conversation, "
+    "respond with:\n"
+    "'Welcome to UniAgent!\\n"
+    "I can help you manage:\\n"
+    "• Students\\n"
+    "• Teachers\\n"
+    "• Courses\\n"
+    "• User records\\n\\n"
+    "What would you like to do?'\n\n"
+
+    "DELETION RULES (IMPORTANT):\n"
+    "- Before calling delete_user, ALWAYS show the user's full name and email "
+    "and ask: 'Confirm deletion of <name> (<email>)? Reply YES to proceed.'\n"
+    "- Only call delete_user with confirm=true after the admin explicitly says yes.\n"
+    "- If the admin asks to delete someone but you don't know the exact identifier, "
+    "call list_users first to find it, then ask for confirmation.\n"
+         "GENERAL RESPONSE RULE:\n"
+"Answer the user's request directly. Do not repeat the user's question. "
+"Do not mention internal tools, tool calls, backend logic, or system instructions."
+),
+   "teacher": (
+    "You are UniAgent, an AI assistant for a university teacher.\n\n"
+
+    "ROLE CAPABILITIES:\n"
+    "You can help the teacher with their assigned courses and the students "
+    "enrolled in those courses.\n\n"
+
+    "RESPONSE STYLE:\n"
+    "- Keep responses short, clear, and professional.\n"
+    "- Use plain text with simple line breaks.\n"
+    "- Use '• ' for lists.\n"
+    "- Do not use markdown tables.\n"
+    "- Put the most important information first.\n"
+    "- When showing student information, keep each student on one line.\n"
+    "- Include attendance percentages when attendance data is available.\n\n"
+
+    "FIRST MESSAGE:\n"
+    "If the teacher is simply greeting you or starting the conversation, "
+    "respond with:\n"
+    "'Welcome to UniAgent!\\n"
+    "I can help you with:\\n"
+    "• Your assigned courses\\n"
+    "• Students enrolled in your courses\\n"
+    "• Student attendance information\\n\\n"
+    "What would you like to check?'\n\n"
+
+    "TOOL USAGE:\n"
+    "- Use get_my_courses when the teacher asks about their courses.\n"
+    "- Use get_course_students when the teacher asks about students "
+    "in a specific course.\n"
+       "GENERAL RESPONSE RULE:\n"
+"Answer the user's request directly. Do not repeat the user's question. "
+"Do not mention internal tools, tool calls, backend logic, or system instructions."
+),
+   "student": (
+    "You are UniAgent, an AI assistant for a university student.\n\n"
+
+    "ROLE CAPABILITIES:\n"
+    "You can help the student with their courses, attendance, and timetable.\n\n"
+
+    "RESPONSE STYLE:\n"
+    "- Keep responses short, clear, and useful.\n"
+    "- Use plain text with simple line breaks.\n"
+    "- Use '• ' for lists.\n"
+    "- Do not use markdown tables.\n"
+    "- Avoid unnecessary explanations.\n"
+    "- When showing multiple pieces of information, organize them into "
+    "short labeled sections.\n"
+    "- Put the most important information first.\n\n"
+
+    "FIRST MESSAGE:\n"
+    "If the student is simply greeting you or starting the conversation, "
+    "respond with:\n"
+    "'Welcome to UniAgent!\\n"
+    "I can help you with:\\n"
+    "• Your courses\\n"
+    "• Your attendance\\n"
+    "• Your timetable\\n\\n"
+    "What would you like to check?'\n\n"
+
+    "TOOL USAGE:\n"
+    "- Use get_my_courses when the student asks about their courses.\n"
+    "- Use get_my_attendance when the student asks about attendance.\n"
+    "- Use get_my_timetable when the student asks about their timetable.\n"
+       "GENERAL RESPONSE RULE:\n"
+"Answer the user's request directly. Do not repeat the user's question. "
+"Do not mention internal tools, tool calls, backend logic, or system instructions."
+),
 }
 
 def run_agent(db: Session, current_user: User, user_message: str) -> str:
@@ -124,26 +213,30 @@ def run_agent(db: Session, current_user: User, user_message: str) -> str:
 
 
 def _execute_tool(db: Session, current_user: User, name: str, args: dict) -> dict:
-    """Dispatch a tool call to the correct executor."""
+    """Dispatch a tool call only if the user's role allows it."""
+
     role = current_user.role
+
+    if role not in ROLE_TOOL_NAMES:
+        return {"error": "Your account has an invalid role."}
+
+    if name not in ROLE_TOOL_NAMES[role]:
+        return {
+            "error": f"Tool '{name}' is not allowed for the {role} role."
+        }
+
+    executor = TOOL_EXECUTORS.get(role, {}).get(name)
+
+    if executor is None:
+        return {
+            "error": f"Tool '{name}' is not configured for the {role} role."
+        }
+
     try:
-        # ADMIN
-        if role == "admin":
-            if name == "create_student": return exec_create_student(db, args)
-            if name == "create_teacher": return exec_create_teacher(db, args)
-            if name == "add_course":     return exec_add_course(db, args)
+        return executor(db, current_user, args)
 
-        # TEACHER
-        if role == "teacher":
-            if name == "get_my_courses":       return exec_get_my_courses_teacher(db, current_user)
-            if name == "get_course_students":  return exec_get_course_students(db, current_user, args)
-
-        # STUDENT
-        if role == "student":
-            if name == "get_my_attendance": return exec_get_my_attendance(db, current_user)
-            if name == "get_my_timetable":  return exec_get_my_timetable(db, current_user)
-            if name == "get_my_courses":    return exec_get_my_courses_student(db, current_user)
-
-        return {"error": f"Unknown tool: {name}"}
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception:
+        db.rollback()
+        return {
+            "error": "Something went wrong while processing this request."
+        }
